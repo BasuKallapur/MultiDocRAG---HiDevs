@@ -65,7 +65,6 @@ class MultiFormatRAG:
             "You are a conversational AI chatbot developed to replicate Basavaraj C Kkallapur, "
             "an accomplished professional with a proven track record in digital strategy, "
             "product innovation, and strategic investment management. "
-            # ... rest of your system prompt ...
         )
 
         prompt_template = PromptTemplate(
@@ -165,19 +164,27 @@ def main():
                 st.write(f"AI: {message['content']}")
 
     if st.session_state.qa_chain is not None:
-        user_input = st.text_input("Ask a question:", key="user_input")
+        if "temp_input" not in st.session_state:
+            st.session_state.temp_input = ""
+
+        user_input = st.text_input("Ask a question:", key="temp_input", placeholder="Type your question here...")
+
         if st.button("Send"):
-            if user_input:
-                st.session_state.chat_history.append({"role": "user", "content": user_input})
+            if st.session_state.temp_input:
+                st.session_state.chat_history.append({"role": "user", "content": st.session_state.temp_input})
 
                 with st.spinner("Thinking..."):
                     try:
-                        response = st.session_state.rag_system.query(st.session_state.qa_chain, user_input)
+                        response = st.session_state.rag_system.query(st.session_state.qa_chain, st.session_state.temp_input)
                         st.session_state.chat_history.append({"role": "assistant", "content": response})
                     except Exception as e:
                         st.error(f"Error generating response: {str(e)}")
 
+                # ✅ Use `pop()` instead of directly modifying session state
+                st.session_state.pop("temp_input", None)
+
                 st.rerun()
+
     else:
         st.info("Please initialize the system using the sidebar configuration.")
 
@@ -186,4 +193,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
