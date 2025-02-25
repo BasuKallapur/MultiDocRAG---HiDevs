@@ -13,7 +13,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 
-# Your MultiFormatRAG class implementation
+# MultiFormatRAG Class
 class MultiFormatRAG:
     def __init__(self, openai_api_key: str):
         self.loader_map = {
@@ -40,6 +40,10 @@ class MultiFormatRAG:
 
     def load_documents(self, directory_path: str) -> List[Dict]:
         documents = []
+        
+        # ✅ Clear previous document cache
+        self.logger.info("Clearing previous document data...")
+        
         for file in os.listdir(directory_path):
             file_path = os.path.join(directory_path, file)
             file_extension = os.path.splitext(file)[1].lower()
@@ -56,45 +60,65 @@ class MultiFormatRAG:
         return documents
 
     def process_documents(self, documents: List[Dict]) -> FAISS:
+        if not documents:
+            self.logger.warning("No documents to process. Skipping FAISS indexing.")
+            return None
+
+        # ✅ Ensure previous FAISS index is cleared
+        self.logger.info("Clearing old FAISS index and reprocessing documents...")
         texts = self.text_splitter.split_documents(documents)
+        
         vectorstore = FAISS.from_documents(texts, self.embeddings)
+        
+        # ✅ Debug retrieval system
+        print("Testing retrieval system with sample query...")
+        sample_query = "Transform Calculus, Fourier Series and Numerical Techniques course code"
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+        retrieved_docs = retriever.get_relevant_documents(sample_query)
+        print("Top retrieved documents:", retrieved_docs)
+
         return vectorstore
 
+
     def create_qa_chain(self, vectorstore: FAISS) -> RetrievalQA:
-        system_prompt = (
-            "You are a conversational AI chatbot developed to replicate Basavaraj C Kkallapur, "
-            "an accomplished professional with a proven track record in digital strategy, "
-            "product innovation, and strategic investment management. "
-        )
-
-        prompt_template = PromptTemplate(
-            input_variables=["context", "question"],
-            template=(
-                f"{system_prompt}\n\n"
-                "Context:\n{context}\n\n"
-                "Question:\n{question}\n\n"
-                "Answer:"
+            system_prompt = (
+                "You are a conversational AI chatbot developed to replicate Basavaraj C Kkallapur, "
+                "an accomplished professional with a proven track record in digital strategy, "
+                "product innovation, and strategic investment management. "
             )
-        )
 
-        llm = ChatGroq(
-            model="llama3-70b-8192",
-            temperature=0,
-            max_tokens=None,
-            timeout=None,
-            max_retries=2,
-        )
+            # Updated prompt with explicit instruction to rely only on the context.
+            prompt_template = PromptTemplate(
+                input_variables=["context", "question"],
+                template=(
+                    f"{system_prompt}\n\n"
+                    "Please answer the following question strictly based on the provided context. "
+                    "If the answer is not found in the context, say 'I don't know'.\n\n"
+                    "Context:\n{context}\n\n"
+                    "Question:\n{question}\n\n"
+                    "Answer:"
+                )
+            )
 
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=vectorstore.as_retriever(
-                search_kwargs={"k": 3}
-            ),
-            chain_type_kwargs={"prompt": prompt_template}
-        )
+            llm = ChatGroq(
+                model="llama3-70b-8192",
+                temperature=0,
+                max_tokens=None,
+                timeout=None,
+                max_retries=2,
+            )
 
-        return qa_chain
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=llm,
+                chain_type="stuff",
+                retriever=vectorstore.as_retriever(
+                    search_kwargs={"k": 5}  # Increase context retrieval
+                ),
+                chain_type_kwargs={"prompt": prompt_template}
+            )
+
+            return qa_chain
+
 
     def query(self, qa_chain: RetrievalQA, question: str) -> str:
         try:
@@ -104,6 +128,7 @@ class MultiFormatRAG:
             self.logger.error(f"Error during query: {str(e)}")
             return f"Error processing query: {str(e)}"
 
+# ✅ Streamlit App Logic
 def initialize_session_state():
     if 'rag_system' not in st.session_state:
         st.session_state.rag_system = None
@@ -144,12 +169,21 @@ def main():
                             with open(os.path.join(temp_dir, file.name), "wb") as f:
                                 f.write(file.getvalue())
 
+                        # ✅ Reset session state to clear old knowledge
+                        st.session_state.rag_system = None
+                        st.session_state.qa_chain = None
+                        st.session_state.chat_history = []
+
                         st.session_state.rag_system = MultiFormatRAG(groq_api_key)
                         documents = st.session_state.rag_system.load_documents(temp_dir)
-                        vectorstore = st.session_state.rag_system.process_documents(documents)
-                        st.session_state.qa_chain = st.session_state.rag_system.create_qa_chain(vectorstore)
 
-                        st.success("System initialized successfully!")
+                        if not documents:
+                            st.error("No valid documents found. Please upload a supported file.")
+                        else:
+                            vectorstore = st.session_state.rag_system.process_documents(documents)
+                            st.session_state.qa_chain = st.session_state.rag_system.create_qa_chain(vectorstore)
+                            st.success("System initialized successfully!")
+
                     except Exception as e:
                         st.error(f"Error initializing system: {str(e)}")
 
@@ -164,32 +198,22 @@ def main():
                 st.write(f"AI: {message['content']}")
 
     if st.session_state.qa_chain is not None:
-        if "temp_input" not in st.session_state:
-            st.session_state.temp_input = ""
+        user_input = st.chat_input("Ask a question:")
 
-        user_input = st.text_input("Ask a question:", key="temp_input", placeholder="Type your question here...")
+        if user_input:
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-        if st.button("Send"):
-            if st.session_state.temp_input:
-                st.session_state.chat_history.append({"role": "user", "content": st.session_state.temp_input})
+            with st.spinner("Thinking..."):
+                try:
+                    response = st.session_state.rag_system.query(st.session_state.qa_chain, user_input)
+                    st.session_state.chat_history.append({"role": "assistant", "content": response})
+                except Exception as e:
+                    st.error(f"Error generating response: {str(e)}")
 
-                with st.spinner("Thinking..."):
-                    try:
-                        response = st.session_state.rag_system.query(st.session_state.qa_chain, st.session_state.temp_input)
-                        st.session_state.chat_history.append({"role": "assistant", "content": response})
-                    except Exception as e:
-                        st.error(f"Error generating response: {str(e)}")
-
-                # ✅ Use `pop()` instead of directly modifying session state
-                st.session_state.pop("temp_input", None)
-
-                st.rerun()
+            st.rerun()  # Refresh the chat to show new messages
 
     else:
         st.info("Please initialize the system using the sidebar configuration.")
-
-    st.markdown("---")
-    st.markdown("AI Clone powered by GROQ and LangChain")
 
 if __name__ == "__main__":
     main()
