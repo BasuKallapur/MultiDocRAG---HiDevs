@@ -139,8 +139,8 @@ def initialize_session_state():
 
 def main():
     st.set_page_config(
-        page_title="AI Clone Chat Interface",
-        page_icon="🤖",
+        page_title="MultiDoc RAG",
+        # page_icon="🤖",
         layout="wide"
     )
 
