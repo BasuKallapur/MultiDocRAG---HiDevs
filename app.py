@@ -187,7 +187,7 @@ def main():
                     except Exception as e:
                         st.error(f"Error initializing system: {str(e)}")
 
-    st.title("AI Clone Chat Interface")
+    st.title("MultiDoc RAG")
 
     chat_container = st.container()
     with chat_container:
